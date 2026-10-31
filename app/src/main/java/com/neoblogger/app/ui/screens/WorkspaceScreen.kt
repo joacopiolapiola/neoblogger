@@ -104,8 +104,11 @@ fun WorkspaceScreen(
         mediaPickerLauncher.launch("*/*")
     }
 
+    var activeHtmlFile by remember { mutableStateOf("index.html") }
+
     LaunchedEffect(selectedFile, editorState.currentText) {
         if (selectedFile.endsWith(".html")) {
+            activeHtmlFile = selectedFile
             activeHtmlSource = editorState.currentText
         }
     }
@@ -115,7 +118,7 @@ fun WorkspaceScreen(
     } else if (activeHtmlSource.isNotBlank()) {
         activeHtmlSource
     } else {
-        runCatching { repository.readFile(project.id, "index.html") }.getOrDefault("<!doctype html>\n<html lang=\"en\">\n<body>\n  <main>\n    <h1>Welcome to Neoblogger</h1>\n  </main>\n</body>\n</html>")
+        runCatching { repository.readFile(project.id, activeHtmlFile) }.getOrDefault("<!doctype html>\n<html lang=\"en\">\n<body>\n  <main>\n    <h1>Welcome to Neoblogger</h1>\n  </main>\n</body>\n</html>")
     }
 
     val hasUnsavedChanges = editorState.currentText != savedSource
@@ -239,11 +242,12 @@ fun WorkspaceScreen(
                             repository = repository,
                             onHtmlSourceChanged = { updatedHtml ->
                                 activeHtmlSource = updatedHtml
-                                if (selectedFile.endsWith(".html")) {
+                                val targetHtmlFile = if (selectedFile.endsWith(".html")) selectedFile else activeHtmlFile
+                                if (selectedFile == targetHtmlFile) {
                                     onSourceChange(updatedHtml)
                                 } else {
                                     scope.launch(Dispatchers.IO) {
-                                        runCatching { repository.saveFile(project.id, "index.html", updatedHtml) }
+                                        runCatching { repository.saveFile(project.id, targetHtmlFile, updatedHtml) }
                                     }
                                 }
                             },

@@ -414,6 +414,11 @@ fun DesignTabScreen(
                                                 val rot = uri.getQueryParameter("rot")
 
                                                 node.setStyle("position", "relative")
+                                                if (node.tagName.lowercase() == "a") {
+                                                    if (node.getStyle("display").isBlank() || node.getStyle("display") == "inline") {
+                                                        node.setStyle("display", "inline-block")
+                                                    }
+                                                }
                                                 if (!w.isNullOrEmpty()) node.setStyle("width", "${w}px")
                                                 if (!h.isNullOrEmpty()) node.setStyle("height", "${h}px")
                                                 if (!left.isNullOrEmpty()) node.setStyle("left", "${left}px")
@@ -1183,6 +1188,7 @@ fun DesignTabScreen(
         var tempFontWeight by remember(selectedNode.nodeId) { mutableStateOf(selectedNode.getStyle("font-weight")) }
         var tempFontFamily by remember(selectedNode.nodeId) { mutableStateOf(selectedNode.getStyle("font-family")) }
         var tempDisplay by remember(selectedNode.nodeId) { mutableStateOf(selectedNode.getStyle("display")) }
+        var tempOpacity by remember(selectedNode.nodeId) { mutableStateOf(selectedNode.getStyle("opacity")) }
 
         val fontPickerLauncher = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.GetContent()
@@ -1518,6 +1524,29 @@ fun DesignTabScreen(
                         }
                     }
 
+                    // Opacity / Transparency Controls (for overlays)
+                    Column {
+                        Text("Opacity / Transparency:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            listOf("1" to "100% Solid", "0.7" to "70%", "0.3" to "30%", "0" to "0% Invisible").forEach { (opVal, label) ->
+                                val isSel = tempOpacity == opVal
+                                if (isSel) {
+                                    Button(onClick = { tempOpacity = opVal }, shape = RoundedCornerShape(8.dp)) {
+                                        Text(label, fontSize = 11.sp)
+                                    }
+                                } else {
+                                    OutlinedButton(onClick = { tempOpacity = opVal }, shape = RoundedCornerShape(8.dp)) {
+                                        Text(label, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     OutlinedTextField(
                         value = tempTransform,
                         onValueChange = { tempTransform = it },
@@ -1546,6 +1575,13 @@ fun DesignTabScreen(
                         if (cleanTag == "a") {
                             if (tempHref.isBlank()) selectedNode.attributes.remove("href") else selectedNode.attributes["href"] = tempHref.trim()
                             if (tempTarget.isBlank()) selectedNode.attributes.remove("target") else selectedNode.attributes["target"] = tempTarget.trim()
+
+                            // Auto-set display: inline-block for <a> links when dimensions or opacity are specified
+                            if (tempWidth.isNotBlank() || tempHeight.isNotBlank() || tempOpacity.isNotBlank() || tempMargin.isNotBlank() || tempPadding.isNotBlank()) {
+                                if (tempDisplay.isBlank() || tempDisplay == "inline") {
+                                    tempDisplay = "inline-block"
+                                }
+                            }
                         }
                         if (cleanTag == "video" || cleanTag == "audio") {
                             if (tempControls) selectedNode.attributes["controls"] = "" else selectedNode.attributes.remove("controls")
@@ -1565,6 +1601,7 @@ fun DesignTabScreen(
                         selectedNode.setStyle("text-align", tempTextAlign)
                         selectedNode.setStyle("font-weight", tempFontWeight)
                         selectedNode.setStyle("display", tempDisplay)
+                        selectedNode.setStyle("opacity", tempOpacity)
 
                         updateDocumentAndEmit()
                         showPropertiesSheet = false
