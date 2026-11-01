@@ -1,4 +1,4 @@
-name: Nightly Latest Release
+name: Pure Native Nightly Latest Release
 
 on:
   push:
@@ -10,41 +10,51 @@ on:
 permissions:
   contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE20: true
-
 jobs:
   build:
-    name: Build & Update Latest Release
-    runs-on: ubuntu-22.04
+    name: Native Build & Update Latest Release
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout Code via Native Git
+        run: |
+          git clone --depth 1 "https://github.com/${{ github.repository }}.git" .
+          git checkout ${{ github.sha }}
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'gradle'
+      - name: Install JDK 17 & Android SDK via Native Shell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jdk wget unzip
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+          echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
+          echo "$JAVA_HOME/bin" >> $GITHUB_PATH
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          cd $HOME/android-sdk/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
+          unzip -q tools.zip
+          mv cmdline-tools latest
+          rm tools.zip
 
-      - name: Make Gradlew Executable
-        run: chmod +x gradlew
+          export ANDROID_HOME=$HOME/android-sdk
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
 
-      - name: Build Debug APK
-        run: ./gradlew app:assembleDebug --no-daemon
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
-      - name: Update Latest Release Tag
-        uses: ncipollo/release-action@v1
-        with:
-          artifacts: "app/build/outputs/apk/debug/app-debug.apk"
-          tag: "latest"
-          name: "Neoblogger App Latest Release"
-          body: "🚀 Latest Neoblogger Android App Build. Download `app-debug.apk` below directly to install on your Android device."
-          allowUpdates: true
-          recreate: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Debug APK via Gradlew
+        run: |
+          chmod +x gradlew
+          ./gradlew app:assembleDebug --no-daemon
+
+      - name: Update Latest Release via Native GitHub CLI (gh)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "latest" app/build/outputs/apk/debug/app-debug.apk \
+            --title "Neoblogger App Latest Release" \
+            --notes "🚀 Latest Neoblogger Android App Build. Download app-debug.apk directly below." \
+            --clobber || \
+          gh release upload "latest" app/build/outputs/apk/debug/app-debug.apk --clobber
