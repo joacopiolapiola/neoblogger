@@ -115,10 +115,8 @@ fun WorkspaceScreen(
 
     val designHtmlInput = if (selectedFile.endsWith(".html")) {
         editorState.currentText
-    } else if (activeHtmlSource.isNotBlank()) {
-        activeHtmlSource
     } else {
-        runCatching { repository.readFile(project.id, activeHtmlFile) }.getOrDefault("<!doctype html>\n<html lang=\"en\">\n<body>\n  <main>\n    <h1>Welcome to Neoblogger</h1>\n  </main>\n</body>\n</html>")
+        runCatching { repository.readFile(project.id, activeHtmlFile) }.getOrDefault(activeHtmlSource)
     }
 
     val hasUnsavedChanges = editorState.currentText != savedSource

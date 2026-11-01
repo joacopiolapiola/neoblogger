@@ -27,25 +27,29 @@ class ProjectRepositoryTest {
     }
 
     @Test
-    fun createProject_generatesExpectedStarterFiles() {
-        val project = repository.createProject("My First Blog")
+    fun createProject_generatesBlankCanvas() {
+        val project = repository.createProject("My Clean Site")
 
         assertNotNull(project.id)
-        assertEquals("My First Blog", project.name)
-
-        val projects = repository.listProjects()
-        assertEquals(1, projects.size)
-        assertEquals("My First Blog", projects[0].name)
+        assertEquals("My Clean Site", project.name)
 
         val html = repository.readFile(project.id, "index.html")
         assertTrue(html.contains("<!doctype html>"))
-        assertTrue(html.contains("<title>My new site</title>"))
+        assertTrue(html.contains("<title>New Project</title>"))
+        assertTrue(html.contains("<body>\n</body>"))
 
         val css = repository.readFile(project.id, "style.css")
         assertTrue(css.contains("box-sizing"))
+    }
 
-        val js = repository.readFile(project.id, "script.js")
-        assertTrue(js.contains("hello-button"))
+    @Test
+    fun listProjects_whenEmpty_createsDemoShowcaseProject() {
+        val projects = repository.listProjects()
+        assertEquals(1, projects.size)
+        assertTrue(projects[0].name.contains("Demo Showcase Site"))
+
+        val html = repository.readFile(projects[0].id, "index.html")
+        assertTrue(html.contains("Welcome to Neoblogger"))
     }
 
     @Test
@@ -80,10 +84,10 @@ class ProjectRepositoryTest {
     @Test
     fun deleteProject_removesProjectDirectory() {
         val project = repository.createProject("To Delete")
-        assertEquals(1, repository.listProjects().size)
+        assertFalse(!repository.projectRoot(project.id).exists())
 
         repository.deleteProject(project.id)
-        assertEquals(0, repository.listProjects().size)
+        assertFalse(repository.projectRoot(project.id).exists())
     }
 
     @Test

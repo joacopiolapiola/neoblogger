@@ -11,7 +11,7 @@ import java.util.UUID
 class ProjectRepository(private val projectsDirectory: File) {
 
     fun listProjects(): List<WebsiteProject> {
-        return projectsDirectory.listFiles()
+        val projects = projectsDirectory.listFiles()
             .orEmpty()
             .filter { it.isDirectory && isProjectId(it.name) }
             .mapNotNull { directory ->
@@ -24,6 +24,12 @@ class ProjectRepository(private val projectsDirectory: File) {
                 )
             }
             .sortedByDescending { it.lastOpenedAt }
+
+        if (projects.isEmpty()) {
+            val demoProject = createDemoShowcaseProject()
+            return listOf(demoProject)
+        }
+        return projects
     }
 
     fun createProject(name: String): WebsiteProject {
@@ -355,6 +361,16 @@ class ProjectRepository(private val projectsDirectory: File) {
         }
     }
 
+    fun createDemoShowcaseProject(): WebsiteProject {
+        val project = createProject("✨ Demo Showcase Site")
+        saveFile(project.id, "index.html", demoHtml)
+        saveFile(project.id, "about.html", demoAboutHtml)
+        saveFile(project.id, "about.css", demoAboutCss)
+        saveFile(project.id, "style.css", demoCss)
+        saveFile(project.id, "script.js", demoJs)
+        return project
+    }
+
     companion object {
         const val PROJECT_NAME_FILE = "project-name.txt"
         const val ENTRY_FILE = "index.html"
@@ -368,18 +384,11 @@ class ProjectRepository(private val projectsDirectory: File) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>My new site</title>
+  <title>New Project</title>
   <link rel="stylesheet" href="style.css">
   <script src="script.js" defer></script>
 </head>
 <body>
-  <main>
-    <p class="eyebrow">A new beginning</p>
-    <h1>My little corner of the web</h1>
-    <p>Edit this page in Code or Design, then test it in Preview.</p>
-    <button id="hello-button" type="button">Say hello</button>
-    <p id="greeting" aria-live="polite"></p>
-  </main>
 </body>
 </html>
 """
@@ -387,22 +396,94 @@ class ProjectRepository(private val projectsDirectory: File) {
         val starterCss = """* { box-sizing: border-box; }
 body {
   margin: 0;
+  padding: 1rem;
+  font-family: system-ui, sans-serif;
+  color: #202a26;
+  background: #ffffff;
+}
+"""
+
+        val starterJs = """// Custom JavaScript for this project
+"""
+
+        val demoHtml = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Neoblogger Demo Showcase</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="about.html">About Showcase</a>
+    </nav>
+  </header>
+  <main>
+    <p class="eyebrow">Interactive Demo Site</p>
+    <h1>Welcome to Neoblogger</h1>
+    <p>Explore full visual canvas editing, custom fonts, FTP & Neocities publishing, and Emmet support.</p>
+    <button id="hello-button" type="button">Tap for Interactive Counter</button>
+    <p id="greeting" aria-live="polite"></p>
+  </main>
+</body>
+</html>
+"""
+
+        val demoAboutHtml = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>About - Neoblogger Demo</title>
+  <link rel="stylesheet" href="about.css">
+</head>
+<body>
+  <main>
+    <h1>About Neoblogger Showcase</h1>
+    <p>Neoblogger is a modern mobile Web IDE and Visual Builder built for Android devices.</p>
+    <a href="index.html">← Back to Home</a>
+  </main>
+</body>
+</html>
+"""
+
+        val demoAboutCss = """/* Styles for about.html */
+body {
+  margin: 0;
+  padding: 2rem;
+  font-family: system-ui, sans-serif;
+  background: #fdfbf7;
+  color: #2c3e50;
+}
+h1 { color: #2196f3; }
+a { color: #4caf50; font-weight: bold; text-decoration: none; }
+"""
+
+        val demoCss = """* { box-sizing: border-box; }
+body {
+  margin: 0;
   min-height: 100vh;
-  display: grid;
-  place-items: center;
   padding: 2rem;
   color: #202a26;
   background: #f2f5ed;
   font: 1rem/1.6 system-ui, sans-serif;
 }
-main { width: min(100%, 42rem); }
+header { margin-bottom: 2rem; }
+nav a { margin-right: 1rem; color: #315c4c; font-weight: bold; text-decoration: none; }
+main { width: min(100%, 42rem); margin-inline: auto; }
 .eyebrow { color: #557768; text-transform: uppercase; letter-spacing: .12em; }
-h1 { max-width: 12ch; font: 600 clamp(2.5rem, 8vw, 5rem)/.98 Georgia, serif; }
-button { padding: .8rem 1.1rem; border: 0; border-radius: .4rem; color: white; background: #315c4c; font: inherit; cursor: pointer; }
+h1 { font: 600 clamp(2.5rem, 8vw, 4rem)/1.1 Georgia, serif; color: #1e3a2b; }
+button { padding: .8rem 1.2rem; border: 0; border-radius: .4rem; color: white; background: #315c4c; font: inherit; cursor: pointer; }
 """
 
-        val starterJs = """document.querySelector('#hello-button')?.addEventListener('click', () => {
-  document.querySelector('#greeting').textContent = 'Hello from your local site.';
+        val demoJs = """let count = 0;
+document.querySelector('#hello-button')?.addEventListener('click', () => {
+  count++;
+  document.querySelector('#greeting').textContent = 'Button clicked ' + count + ' times!';
 });
 """
     }
