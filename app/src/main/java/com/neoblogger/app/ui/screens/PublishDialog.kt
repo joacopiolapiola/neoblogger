@@ -17,6 +17,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -24,6 +25,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,11 +46,14 @@ import com.neoblogger.app.storage.NeocitiesConfig
 import com.neoblogger.app.storage.PublishPreferences
 import com.neoblogger.app.web.FtpPublisher
 import com.neoblogger.app.web.NeocitiesPublisher
+import com.neoblogger.app.web.OptimizationOptions
+import com.neoblogger.app.web.OptimizationReport
+import com.neoblogger.app.web.ProjectOptimizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class PublishTab { FTP, NEOCITIES }
+private enum class PublishTab { FTP, NEOCITIES, OPTIMIZER }
 
 @Composable
 fun PublishDialog(
@@ -74,10 +79,60 @@ fun PublishDialog(
     var isPublishing by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
+    // Optimizer State
+    var optimizationReport by remember { mutableStateOf<OptimizationReport?>(null) }
+    var optPurgeAssets by remember { mutableStateOf(true) }
+    var optCleanCss by remember { mutableStateOf(true) }
+    var optCompressMedia by remember { mutableStateOf(true) }
+
+    fun runProjectAnalysis() {
+        scope.launch(Dispatchers.IO) {
+            val projDir = repository.projectRoot(projectId)
+            val report = ProjectOptimizer.analyzeProject(projDir)
+            withContext(Dispatchers.Main) {
+                optimizationReport = report
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        runProjectAnalysis()
+    }
+
     fun saveConfigs() {
         val portInt = ftpPort.trim().toIntOrNull() ?: 21
         publishPrefs.saveFtpConfig(projectId, FtpConfig(ftpHost, portInt, ftpUser, ftpPass, ftpPath))
         publishPrefs.saveNeocitiesConfig(projectId, NeocitiesConfig(neocitiesToken, neocitiesSite))
+    }
+
+    fun executeProjectOptimization() {
+        isPublishing = true
+        statusMessage = "Starting project optimization..."
+
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val projDir = repository.projectRoot(projectId)
+                val options = OptimizationOptions(
+                    purgeUnusedAssets = optPurgeAssets,
+                    cleanUnusedCss = optCleanCss,
+                    compressMedia = optCompressMedia
+                )
+                ProjectOptimizer.optimizeProject(projDir, options) { progress ->
+                    scope.launch(Dispatchers.Main) { statusMessage = progress }
+                }
+            }.onSuccess { summary ->
+                withContext(Dispatchers.Main) {
+                    statusMessage = "✅ Optimization Complete! Purged ${summary.purgedAssetsCount} unused assets, compressed ${summary.compressedMediaCount} images, saved ${summary.bytesSaved / 1024} KB."
+                    isPublishing = false
+                    runProjectAnalysis()
+                }
+            }.onFailure { err ->
+                withContext(Dispatchers.Main) {
+                    statusMessage = "❌ Optimization Error: ${err.message}"
+                    isPublishing = false
+                }
+            }
+        }
     }
 
     fun deployFtp() {
@@ -182,38 +237,50 @@ fun PublishDialog(
     AlertDialog(
         onDismissRequest = { if (!isPublishing) onDismissRequest() },
         title = {
-            Text("🚀 Publish / Deploy Site", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("🚀 Publish & Optimize Site", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(380.dp)
+                    .height(390.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Tab Switcher (FTP vs Neocities)
+                // Tab Switcher (FTP vs Neocities vs Optimizer)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     if (selectedTab == PublishTab.FTP) {
-                        Button(onClick = {}, shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f)) {
-                            Text("📁 FTP Server", fontSize = 13.sp)
+                        Button(onClick = {}, shape = RoundedCornerShape(8.dp)) {
+                            Text("📁 FTP Server", fontSize = 12.sp)
                         }
                     } else {
-                        OutlinedButton(onClick = { selectedTab = PublishTab.FTP }, shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f)) {
-                            Text("📁 FTP Server", fontSize = 13.sp)
+                        OutlinedButton(onClick = { selectedTab = PublishTab.FTP }, shape = RoundedCornerShape(8.dp)) {
+                            Text("📁 FTP Server", fontSize = 12.sp)
                         }
                     }
 
                     if (selectedTab == PublishTab.NEOCITIES) {
-                        Button(onClick = {}, shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f)) {
-                            Text("🐱 Neocities", fontSize = 13.sp)
+                        Button(onClick = {}, shape = RoundedCornerShape(8.dp)) {
+                            Text("🐱 Neocities", fontSize = 12.sp)
                         }
                     } else {
-                        OutlinedButton(onClick = { selectedTab = PublishTab.NEOCITIES }, shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f)) {
-                            Text("🐱 Neocities", fontSize = 13.sp)
+                        OutlinedButton(onClick = { selectedTab = PublishTab.NEOCITIES }, shape = RoundedCornerShape(8.dp)) {
+                            Text("🐱 Neocities", fontSize = 12.sp)
+                        }
+                    }
+
+                    if (selectedTab == PublishTab.OPTIMIZER) {
+                        Button(onClick = {}, shape = RoundedCornerShape(8.dp)) {
+                            Text("⚡ Limpiador", fontSize = 12.sp)
+                        }
+                    } else {
+                        OutlinedButton(onClick = { selectedTab = PublishTab.OPTIMIZER }, shape = RoundedCornerShape(8.dp)) {
+                            Text("⚡ Limpiador", fontSize = 12.sp)
                         }
                     }
                 }
@@ -290,6 +357,57 @@ fun PublishDialog(
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
+                    }
+
+                    PublishTab.OPTIMIZER -> {
+                        Text("⚡ Limpiador y Optimizador de Proyecto:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.tertiary)
+
+                        optimizationReport?.let { rep ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("📊 Reporte de Análisis:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text("🗑️ Assets sin usar: ${rep.unusedAssetFiles.size} archivos (${rep.estimatedBytesSavable / 1024} KB)", fontSize = 12.sp)
+                                    Text("🎨 Reglas CSS obsoletas: ${rep.unusedCssRules.size} reglas", fontSize = 12.sp)
+                                    Text("🖼️ Imágenes para compresión: ${rep.compressableMediaFiles.size} imágenes", fontSize = 12.sp)
+
+                                    if (rep.orphanHtmlPages.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("⚠️ Páginas Huérfanas (Sin enlaces desde index.html):", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                                        rep.orphanHtmlPages.forEach { orphan ->
+                                            Text("  • $orphan (Solo accesible escribiendo la URL)", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = optPurgeAssets, onCheckedChange = { optPurgeAssets = it })
+                            Text("Eliminar assets sin usar en /assets/", fontSize = 12.sp)
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = optCleanCss, onCheckedChange = { optCleanCss = it })
+                            Text("Limpiar reglas CSS no utilizadas", fontSize = 12.sp)
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = optCompressMedia, onCheckedChange = { optCompressMedia = it })
+                            Text("Comprimir imágenes sin pérdida (WebP/PNG)", fontSize = 12.sp)
+                        }
+
+                        Button(
+                            onClick = { executeProjectOptimization() },
+                            enabled = !isPublishing,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("⚡ Ejecutar Limpieza y Optimización", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 
