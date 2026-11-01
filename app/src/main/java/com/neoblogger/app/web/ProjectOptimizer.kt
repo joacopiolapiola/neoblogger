@@ -16,13 +16,17 @@ data class OptimizationReport(
 data class OptimizationOptions(
     val purgeUnusedAssets: Boolean = true,
     val cleanUnusedCss: Boolean = true,
-    val compressMedia: Boolean = true
+    val compressMedia: Boolean = true,
+    val generateSitemap: Boolean = true,
+    val autoAltImages: Boolean = true
 )
 
 data class OptimizationSummary(
     val purgedAssetsCount: Int = 0,
     val cleanedCssRulesCount: Int = 0,
     val compressedMediaCount: Int = 0,
+    val autoAltCount: Int = 0,
+    val sitemapGenerated: Boolean = false,
     val bytesSaved: Long = 0L,
     val warnings: List<String> = emptyList()
 )
@@ -65,7 +69,7 @@ object ProjectOptimizer {
             }
         }
 
-        // 2. Detect Orphan HTML Pages (Pages not linked from any other page)
+        // 2. Detect Orphan HTML Pages
         val orphanPages = mutableListOf<String>()
         val allHtmlLinks = htmlTexts.values.flatMap { text ->
             Regex("href=[\"']([^\"']+\\.html)[\"']", RegexOption.IGNORE_CASE)
@@ -117,6 +121,111 @@ object ProjectOptimizer {
         )
     }
 
+    fun generateSitemapXml(projectDir: File): File {
+        val htmlFiles = projectDir.walkTopDown()
+            .filter { it.isFile && it.extension.lowercase() == "html" && !it.name.startsWith(".") }
+            .toList()
+
+        val sb = StringBuilder()
+        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+        sb.append("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n")
+
+        for (html in htmlFiles) {
+            val relPath = projectDir.toPath().relativize(html.toPath()).toString().replace('\\', '/')
+            val priority = if (relPath.lowercase() == "index.html") "1.0" else "0.8"
+            sb.append("  <url>\n")
+            sb.append("    <loc>$relPath</loc>\n")
+            sb.append("    <priority>$priority</priority>\n")
+            sb.append("  </url>\n")
+        }
+
+        sb.append("</urlset>\n")
+
+        val sitemapFile = File(projectDir, "sitemap.xml")
+        sitemapFile.writeText(sb.toString(), Charsets.UTF_8)
+        return sitemapFile
+    }
+
+    fun autoAddAltToLinkedImages(projectDir: File): Int {
+        val htmlFiles = projectDir.walkTopDown()
+            .filter { it.isFile && it.extension.lowercase() == "html" && !it.name.startsWith(".") }
+            .toList()
+
+        var updatedCount = 0
+        val linkPattern = Regex("(?i)<a[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
+
+        for (htmlFile in htmlFiles) {
+            val htmlContent = htmlFile.readText(Charsets.UTF_8)
+            var modified = false
+
+            val newContent = linkPattern.replace(htmlContent) { matchResult ->
+                val hrefTarget = matchResult.groupValues[1]
+                val innerHtml = matchResult.groupValues[2]
+
+                if (innerHtml.contains("<img", ignoreCase = true) && !innerHtml.contains("alt=", ignoreCase = true)) {
+                    val derivedAlt = hrefTarget.substringAfterLast('/').substringBeforeLast('.')
+                        .replace('-', ' ').replace('_', ' ').trim()
+                        .ifBlank { "link" }
+
+                    val updatedInner = Regex("(?i)<img\\b").replace(innerHtml, "<img alt=\"$derivedAlt\"")
+                    modified = true
+                    updatedCount++
+                    matchResult.value.replace(innerHtml, updatedInner)
+                } else {
+                    matchResult.value
+                }
+            }
+
+            if (modified) {
+                htmlFile.writeText(newContent, Charsets.UTF_8)
+            }
+        }
+
+        return updatedCount
+    }
+
+    fun setAndOptimizeFavicon(projectDir: File, faviconUri: android.net.Uri, context: android.content.Context): Boolean {
+        val assetsDir = File(projectDir, "assets")
+        assetsDir.mkdirs()
+        val faviconFile = File(assetsDir, "favicon.png")
+
+        runCatching {
+            context.contentResolver.openInputStream(faviconUri)?.use { input ->
+                val bitmap = BitmapFactory.decodeStream(input)
+                if (bitmap != null) {
+                    val scaled = Bitmap.createScaledBitmap(bitmap, 64, 64, true)
+                    FileOutputStream(faviconFile).use { out ->
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                            scaled.compress(Bitmap.CompressFormat.WEBP_LOSSLESS, 100, out)
+                        } else {
+                            scaled.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                    }
+                    if (scaled != bitmap) scaled.recycle()
+                    bitmap.recycle()
+                }
+            }
+        }
+
+        if (!faviconFile.exists()) return false
+
+        val htmlFiles = projectDir.walkTopDown()
+            .filter { it.isFile && it.extension.lowercase() == "html" && !it.name.startsWith(".") }
+            .toList()
+
+        val faviconTag = "  <link rel=\"icon\" href=\"assets/favicon.png\" type=\"image/png\">\n</head>"
+
+        for (htmlFile in htmlFiles) {
+            var text = htmlFile.readText(Charsets.UTF_8)
+            if (!text.contains("rel=\"icon\"") && !text.contains("rel='icon'") && text.contains("</head>")) {
+                text = text.replace("</head>", faviconTag)
+                htmlFile.writeText(text, Charsets.UTF_8)
+            }
+        }
+
+        return true
+    }
+
     fun optimizeProject(
         projectDir: File,
         options: OptimizationOptions,
@@ -127,6 +236,8 @@ object ProjectOptimizer {
         var purgedCount = 0
         var compressedCount = 0
         var cleanedCssCount = 0
+        var altAddedCount = 0
+        var sitemapDone = false
         val warningList = mutableListOf<String>()
 
         if (report.orphanHtmlPages.isNotEmpty()) {
@@ -203,10 +314,25 @@ object ProjectOptimizer {
             }
         }
 
+        // 4. Generate sitemap.xml
+        if (options.generateSitemap) {
+            onProgress("Generating sitemap.xml...")
+            generateSitemapXml(projectDir)
+            sitemapDone = true
+        }
+
+        // 5. Auto Add ALT to Linked Images
+        if (options.autoAltImages) {
+            onProgress("Adding missing alt text to linked images...")
+            altAddedCount = autoAddAltToLinkedImages(projectDir)
+        }
+
         return OptimizationSummary(
             purgedAssetsCount = purgedCount,
             cleanedCssRulesCount = cleanedCssCount,
             compressedMediaCount = compressedCount,
+            autoAltCount = altAddedCount,
+            sitemapGenerated = sitemapDone,
             bytesSaved = totalBytesSaved,
             warnings = warningList
         )

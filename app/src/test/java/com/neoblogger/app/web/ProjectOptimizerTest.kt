@@ -75,4 +75,34 @@ class ProjectOptimizerTest {
         assertTrue(css.contains(".active-title"))
         assertFalse(css.contains(".unused-class"))
     }
+
+    @Test
+    fun generateSitemapXml_createsValidSitemapFile() {
+        val sitemap = ProjectOptimizer.generateSitemapXml(tempProjectDir)
+        assertTrue(sitemap.exists())
+
+        val xml = sitemap.readText()
+        assertTrue(xml.contains("<loc>index.html</loc>"))
+        assertTrue(xml.contains("<loc>secret.html</loc>"))
+        assertTrue(xml.contains("<priority>1.0</priority>"))
+    }
+
+    @Test
+    fun autoAddAltToLinkedImages_derivesAltFromHrefTarget() {
+        val htmlFile = File(tempProjectDir, "index.html")
+        htmlFile.writeText("""
+            <!doctype html>
+            <html>
+            <body>
+              <a href="hola.html"><img src="123123.jpg"></a>
+            </body>
+            </html>
+        """.trimIndent())
+
+        val altAddedCount = ProjectOptimizer.autoAddAltToLinkedImages(tempProjectDir)
+        assertEquals(1, altAddedCount)
+
+        val updatedHtml = htmlFile.readText()
+        assertTrue(updatedHtml.contains("alt=\"hola\""))
+    }
 }

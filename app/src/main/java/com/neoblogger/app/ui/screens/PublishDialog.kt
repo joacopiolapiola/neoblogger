@@ -1,5 +1,7 @@
 package com.neoblogger.app.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,7 +35,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -84,6 +85,22 @@ fun PublishDialog(
     var optPurgeAssets by remember { mutableStateOf(true) }
     var optCleanCss by remember { mutableStateOf(true) }
     var optCompressMedia by remember { mutableStateOf(true) }
+    var optGenerateSitemap by remember { mutableStateOf(true) }
+    var optAutoAlt by remember { mutableStateOf(true) }
+
+    val faviconPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { faviconUri ->
+        if (faviconUri != null) {
+            scope.launch(Dispatchers.IO) {
+                val projDir = repository.projectRoot(projectId)
+                val success = ProjectOptimizer.setAndOptimizeFavicon(projDir, faviconUri, context)
+                withContext(Dispatchers.Main) {
+                    statusMessage = if (success) "🌐 Favicon optimizado y enlazado en todas las páginas!" else "❌ Error al configurar favicon."
+                }
+            }
+        }
+    }
 
     fun runProjectAnalysis() {
         scope.launch(Dispatchers.IO) {
@@ -115,14 +132,16 @@ fun PublishDialog(
                 val options = OptimizationOptions(
                     purgeUnusedAssets = optPurgeAssets,
                     cleanUnusedCss = optCleanCss,
-                    compressMedia = optCompressMedia
+                    compressMedia = optCompressMedia,
+                    generateSitemap = optGenerateSitemap,
+                    autoAltImages = optAutoAlt
                 )
                 ProjectOptimizer.optimizeProject(projDir, options) { progress ->
                     scope.launch(Dispatchers.Main) { statusMessage = progress }
                 }
             }.onSuccess { summary ->
                 withContext(Dispatchers.Main) {
-                    statusMessage = "✅ Optimization Complete! Purged ${summary.purgedAssetsCount} unused assets, compressed ${summary.compressedMediaCount} images, saved ${summary.bytesSaved / 1024} KB."
+                    statusMessage = "✅ Optimization Complete! Purged ${summary.purgedAssetsCount} assets, compressed ${summary.compressedMediaCount} images, auto-added ${summary.autoAltCount} alt tags, saved ${summary.bytesSaved / 1024} KB."
                     isPublishing = false
                     runProjectAnalysis()
                 }
@@ -243,7 +262,7 @@ fun PublishDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(390.dp)
+                    .height(410.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -362,6 +381,14 @@ fun PublishDialog(
                     PublishTab.OPTIMIZER -> {
                         Text("⚡ Limpiador y Optimizador de Proyecto:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.tertiary)
 
+                        Button(
+                            onClick = { faviconPickerLauncher.launch("image/*") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("🌐 Elegir / Optimizar Favicon del Sitio", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
                         optimizationReport?.let { rep ->
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -383,6 +410,16 @@ fun PublishDialog(
                                     }
                                 }
                             }
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = optGenerateSitemap, onCheckedChange = { optGenerateSitemap = it })
+                            Text("Generar sitemap.xml automáticamente", fontSize = 12.sp)
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = optAutoAlt, onCheckedChange = { optAutoAlt = it })
+                            Text("Auto-generar alt en imágenes con enlace (<a href='hola.html'><img...>) ", fontSize = 12.sp)
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
