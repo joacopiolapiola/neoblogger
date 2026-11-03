@@ -27,6 +27,7 @@ import com.neoblogger.app.data.WebsiteProject
 import com.neoblogger.app.editor.CodeEditorState
 import com.neoblogger.app.storage.AdPreferences
 import com.neoblogger.app.ui.screens.AssetManagerDialog
+import com.neoblogger.app.ui.screens.CloneSiteDialog
 import com.neoblogger.app.ui.screens.DashboardScreen
 import com.neoblogger.app.ui.screens.LaunchAdDialog
 import com.neoblogger.app.ui.screens.WorkspaceScreen
@@ -80,6 +81,7 @@ private fun NeobloggerMainApp(
 
     var showLaunchAd by remember { mutableStateOf(adPreferences.shouldAttemptLaunchAd()) }
     var showAssetManager by remember { mutableStateOf(false) }
+    var showCloneSiteDialog by remember { mutableStateOf(false) }
 
     fun refreshProjects() {
         scope.launch {
@@ -295,6 +297,9 @@ private fun NeobloggerMainApp(
                     onImportZipClick = {
                         importZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed"))
                     },
+                    onCloneSiteClick = {
+                        showCloneSiteDialog = true
+                    },
                     onOpenProject = { project ->
                         selectedProject = project
                         selectedFile = "index.html"
@@ -346,6 +351,21 @@ private fun NeobloggerMainApp(
                         deleteFileInProject(relativePath)
                     },
                     onDismiss = { showAssetManager = false }
+                )
+            }
+
+            if (showCloneSiteDialog) {
+                CloneSiteDialog(
+                    repository = repository,
+                    onProjectCloned = { clonedProject ->
+                        refreshProjects()
+                        selectedProject = clonedProject
+                        selectedFile = "index.html"
+                        refreshProjectFiles(clonedProject.id)
+                        loadFile(clonedProject.id, "index.html")
+                        showCloneSiteDialog = false
+                    },
+                    onDismissRequest = { showCloneSiteDialog = false }
                 )
             }
         }

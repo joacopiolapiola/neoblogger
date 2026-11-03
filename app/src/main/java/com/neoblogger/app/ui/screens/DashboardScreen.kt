@@ -42,6 +42,7 @@ fun DashboardScreen(
     onCreateProject: (String) -> Unit,
     onImportFolderClick: () -> Unit,
     onImportZipClick: () -> Unit,
+    onCloneSiteClick: () -> Unit,
     onOpenProject: (WebsiteProject) -> Unit,
     onDeleteProject: (WebsiteProject) -> Unit,
 ) {
@@ -66,48 +67,61 @@ fun DashboardScreen(
             fontWeight = FontWeight.Bold
         )
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // Large action buttons for primary project workflows
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Button(
                 onClick = { showCreateDialog = true },
                 modifier = Modifier
                     .weight(1f)
-                    .height(50.dp),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(4.dp)
+                    .height(48.dp),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(2.dp)
             ) {
-                Text(stringResource(R.string.new_project), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.new_project), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
 
             OutlinedButton(
                 onClick = onImportFolderClick,
                 modifier = Modifier
                     .weight(1f)
-                    .height(50.dp),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(4.dp)
+                    .height(48.dp),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(2.dp)
             ) {
-                Text(stringResource(R.string.import_folder), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.import_folder), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
 
             OutlinedButton(
                 onClick = onImportZipClick,
                 modifier = Modifier
                     .weight(1f)
-                    .height(50.dp),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(4.dp)
+                    .height(48.dp),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(2.dp)
             ) {
-                Text(stringResource(R.string.import_zip), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.import_zip), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Button(
+            onClick = onCloneSiteClick,
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Text("🌐 Importar / Clonar Sitio desde URL (Neocities)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
 
         if (projects.isEmpty()) {
             Card(
@@ -118,35 +132,38 @@ fun DashboardScreen(
                 Text(
                     text = stringResource(R.string.empty_projects),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(24.dp)
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium
                 )
             }
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
                 items(projects, key = { it.id }) { project ->
                     Card(
                         onClick = { onOpenProject(project) },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(18.dp),
+                                .padding(16.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column {
                                 Text(
                                     text = project.name,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "Entry: ${project.entryPage}",
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    text = "index.html • style.css • script.js",
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -157,8 +174,7 @@ fun DashboardScreen(
                                 Text(
                                     text = stringResource(R.string.delete),
                                     color = MaterialTheme.colorScheme.error,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontSize = 14.sp
                                 )
                             }
                         }
@@ -171,16 +187,14 @@ fun DashboardScreen(
     if (showCreateDialog) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
-            title = { Text(stringResource(R.string.new_project), style = MaterialTheme.typography.titleLarge) },
+            title = { Text(stringResource(R.string.new_project), style = MaterialTheme.typography.titleMedium) },
             text = {
                 OutlinedTextField(
                     value = projectName,
                     onValueChange = { projectName = it },
                     label = { Text(stringResource(R.string.project_name)) },
-                    placeholder = { Text(stringResource(R.string.project_name_hint)) },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
+                    modifier = Modifier.fillMaxWidth()
                 )
             },
             confirmButton = {
@@ -194,40 +208,37 @@ fun DashboardScreen(
                     },
                     enabled = projectName.isNotBlank()
                 ) {
-                    Text(stringResource(R.string.create), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.create), fontSize = 14.sp)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateDialog = false }) {
-                    Text(stringResource(R.string.cancel), fontSize = 15.sp)
+                    Text(stringResource(R.string.cancel), fontSize = 14.sp)
                 }
             }
         )
     }
 
-    projectToDelete?.let { target ->
+    projectToDelete?.let { targetProject ->
         AlertDialog(
             onDismissRequest = { projectToDelete = null },
-            title = { Text(stringResource(R.string.delete_project), style = MaterialTheme.typography.titleLarge) },
-            text = { Text(stringResource(R.string.delete_project_confirm), style = MaterialTheme.typography.bodyLarge) },
+            title = { Text(stringResource(R.string.delete_project), style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Text(stringResource(R.string.delete_project_confirm))
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        onDeleteProject(target)
+                        onDeleteProject(targetProject)
                         projectToDelete = null
                     }
                 ) {
-                    Text(
-                        stringResource(R.string.delete),
-                        color = MaterialTheme.colorScheme.error,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error, fontSize = 14.sp)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { projectToDelete = null }) {
-                    Text(stringResource(R.string.cancel), fontSize = 15.sp)
+                    Text(stringResource(R.string.cancel), fontSize = 14.sp)
                 }
             }
         )
