@@ -1,5 +1,6 @@
 package com.neoblogger.app.data
 
+import androidx.documentfile.provider.DocumentFile
 import com.neoblogger.app.storage.ZipUtil
 import java.io.File
 import java.io.InputStream
@@ -62,18 +63,20 @@ class ProjectRepository(private val projectsDirectory: File) {
         }
     }
 
-    fun importProjectFromZip(zipInputStream: InputStream, suggestedName: String): WebsiteProject {
-        val cleanName = validateProjectName(suggestedName.ifBlank { "Imported Site" })
+    fun importProjectFromZipUri(context: android.content.Context, zipUri: android.net.Uri, suggestedName: String): WebsiteProject {
+        val cleanName = validateProjectName(suggestedName.ifBlank { "Imported Zip Site" })
         val project = WebsiteProject(UUID.randomUUID().toString(), cleanName)
-        val directory = projectDirectory(project.id)
-        check(directory.mkdirs()) { "Could not create destination directory for zip import." }
+        val projectDir = projectDirectory(project.id)
+        check(projectDir.mkdirs()) { "Could not create destination directory for ZIP import." }
 
         try {
-            ZipUtil.unzip(zipInputStream, directory)
+            context.contentResolver.openInputStream(zipUri)?.use { input ->
+                ZipUtil.unzip(input, projectDir)
+            } ?: throw IllegalStateException("Could not open input ZIP stream.")
 
-            val entryFile = File(directory, ENTRY_FILE)
+            val entryFile = File(projectDir, ENTRY_FILE)
             if (!entryFile.exists()) {
-                val anyHtml = directory.walkTopDown().firstOrNull { it.isFile && it.extension.lowercase() == "html" }
+                val anyHtml = projectDir.walkTopDown().firstOrNull { it.isFile && it.extension.lowercase() == "html" }
                 if (anyHtml != null) {
                     anyHtml.copyTo(entryFile, overwrite = true)
                 } else {
@@ -81,39 +84,112 @@ class ProjectRepository(private val projectsDirectory: File) {
                 }
             }
 
-            File(directory, PROJECT_NAME_FILE).writeText(cleanName, Charsets.UTF_8)
+            File(projectDir, PROJECT_NAME_FILE).writeText(cleanName, Charsets.UTF_8)
             return project
         } catch (e: Exception) {
-            directory.deleteRecursively()
+            projectDir.deleteRecursively()
             throw e
         }
     }
 
-    fun importProjectFromFolder(sourceFolder: File, suggestedName: String): WebsiteProject {
-        require(sourceFolder.isDirectory) { "Source folder must be a directory." }
-        val cleanName = validateProjectName(suggestedName.ifBlank { sourceFolder.name })
+    fun importProjectFromFolderUri(context: android.content.Context, folderUri: android.net.Uri, suggestedName: String): WebsiteProject {
+        val sourceTreeDir = DocumentFile.fromTreeUri(context, folderUri)
+            ?: throw IllegalArgumentException("Invalid source folder URI.")
+
+        val cleanName = validateProjectName(suggestedName.ifBlank { sourceTreeDir.name ?: "Imported Folder Site" })
         val project = WebsiteProject(UUID.randomUUID().toString(), cleanName)
-        val directory = projectDirectory(project.id)
-        check(directory.mkdirs()) { "Could not create destination directory for folder import." }
+        val projectDir = projectDirectory(project.id)
+        check(projectDir.mkdirs()) { "Could not create destination project directory." }
+
+        fun copyDocumentTreeRecursively(sourceDocDir: DocumentFile, targetLocalDir: File) {
+            val files = sourceDocDir.listFiles()
+            for (docFile in files) {
+                val name = docFile.name ?: continue
+                if (docFile.isDirectory) {
+                    val subDir = File(targetLocalDir, name)
+                    subDir.mkdirs()
+                    copyDocumentTreeRecursively(docFile, subDir)
+                } else if (docFile.isFile) {
+                    val destFile = File(targetLocalDir, name)
+                    context.contentResolver.openInputStream(docFile.uri)?.use { input ->
+                        destFile.outputStream().use { out -> input.copyTo(out) }
+                    }
+                }
+            }
+        }
 
         try {
-            sourceFolder.copyRecursively(directory, overwrite = true)
-            File(directory, PROJECT_NAME_FILE).writeText(cleanName, Charsets.UTF_8)
+            copyDocumentTreeRecursively(sourceTreeDir, projectDir)
+            File(projectDir, PROJECT_NAME_FILE).writeText(cleanName, Charsets.UTF_8)
 
-            val entryFile = File(directory, ENTRY_FILE)
+            val entryFile = File(projectDir, ENTRY_FILE)
             if (!entryFile.exists()) {
-                val anyHtml = directory.walkTopDown().firstOrNull { it.isFile && it.extension.lowercase() == "html" }
+                val anyHtml = projectDir.walkTopDown().firstOrNull { it.isFile && it.extension.lowercase() == "html" }
                 if (anyHtml != null) {
                     anyHtml.copyTo(entryFile, overwrite = true)
                 } else {
                     writeAtomically(entryFile, starterHtml)
                 }
             }
+
             return project
         } catch (e: Exception) {
-            directory.deleteRecursively()
+            projectDir.deleteRecursively()
             throw e
         }
+    }
+
+    fun exportProjectToZipUri(context: android.content.Context, projectId: String, zipUri: android.net.Uri) {
+        val projectDir = projectDirectory(projectId)
+        check(projectDir.isDirectory) { "Project directory not found." }
+
+        context.contentResolver.openOutputStream(zipUri, "wt")?.use { out ->
+            exportProjectToZip(projectId, out)
+        } ?: throw IllegalStateException("Could not open destination ZIP stream.")
+    }
+
+    fun exportProjectToFolderUri(context: android.content.Context, projectId: String, folderUri: android.net.Uri) {
+        val projectDir = projectDirectory(projectId)
+        check(projectDir.isDirectory) { "Project directory not found." }
+
+        val destTreeDir = DocumentFile.fromTreeUri(context, folderUri)
+            ?: throw IllegalArgumentException("Invalid destination folder URI.")
+
+        fun copyFolderRecursively(sourceDir: File, targetDocumentDir: DocumentFile) {
+            val files = sourceDir.listFiles().orEmpty()
+            for (file in files) {
+                if (file.name == PROJECT_NAME_FILE || file.name.startsWith(".")) continue
+
+                if (file.isDirectory) {
+                    val existingSubDir = targetDocumentDir.findFile(file.name)
+                    val subDir = existingSubDir ?: targetDocumentDir.createDirectory(file.name)
+                    if (subDir != null) {
+                        copyFolderRecursively(file, subDir)
+                    }
+                } else if (file.isFile) {
+                    val mimeType = when (file.extension.lowercase()) {
+                        "html" -> "text/html"
+                        "css" -> "text/css"
+                        "js" -> "application/javascript"
+                        "png" -> "image/png"
+                        "jpg", "jpeg" -> "image/jpeg"
+                        "svg" -> "image/svg+xml"
+                        "json" -> "application/json"
+                        else -> "application/octet-stream"
+                    }
+
+                    val existingFile = targetDocumentDir.findFile(file.name)
+                    val destDocFile = existingFile ?: targetDocumentDir.createFile(mimeType, file.name)
+                    if (destDocFile != null) {
+                        context.contentResolver.openOutputStream(destDocFile.uri, "wt")?.use { out ->
+                            file.inputStream().use { input -> input.copyTo(out) }
+                        }
+                    }
+                }
+            }
+        }
+
+        copyFolderRecursively(projectDir, destTreeDir)
     }
 
     fun exportProjectToZip(projectId: String, outputStream: OutputStream) {

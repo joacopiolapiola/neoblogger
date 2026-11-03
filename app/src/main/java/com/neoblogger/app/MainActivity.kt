@@ -1,14 +1,17 @@
 package com.neoblogger.app
 
-import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarHost
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -16,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.neoblogger.app.data.ProjectFile
 import com.neoblogger.app.data.ProjectRepository
@@ -37,33 +41,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var repository: ProjectRepository
     private lateinit var adPreferences: AdPreferences
 
-    private var activeProjectIdForExport: String? = null
-    private var onImportFolderSelected: ((Uri) -> Unit)? = null
-    private var onImportZipSelected: ((Uri) -> Unit)? = null
-    private var onExportZipSelected: ((Uri) -> Unit)? = null
-    private var onExportFolderSelected: ((Uri) -> Unit)? = null
-    private var onAddAssetSelected: ((Uri) -> Unit)? = null
-
-    private val importFolderLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let { onImportFolderSelected?.invoke(it) }
-    }
-
-    private val importZipLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { onImportZipSelected?.invoke(it) }
-    }
-
-    private val exportZipLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
-        uri?.let { onExportZipSelected?.invoke(it) }
-    }
-
-    private val exportFolderLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let { onExportFolderSelected?.invoke(it) }
-    }
-
-    private val addAssetLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { onAddAssetSelected?.invoke(it) }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -74,29 +51,7 @@ class MainActivity : ComponentActivity() {
             NeobloggerTheme {
                 NeobloggerMainApp(
                     repository = repository,
-                    adPreferences = adPreferences,
-                    onRequestImportFolder = { onSelected ->
-                        onImportFolderSelected = onSelected
-                        importFolderLauncher.launch(null)
-                    },
-                    onRequestImportZip = { onSelected ->
-                        onImportZipSelected = onSelected
-                        importZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed"))
-                    },
-                    onRequestExportZip = { projectId, defaultName, onSelected ->
-                        activeProjectIdForExport = projectId
-                        onExportZipSelected = onSelected
-                        exportZipLauncher.launch("$defaultName.zip")
-                    },
-                    onRequestExportFolder = { projectId, onSelected ->
-                        activeProjectIdForExport = projectId
-                        onExportFolderSelected = onSelected
-                        exportFolderLauncher.launch(null)
-                    },
-                    onRequestAddAsset = { onSelected ->
-                        onAddAssetSelected = onSelected
-                        addAssetLauncher.launch(arrayOf("image/*"))
-                    }
+                    adPreferences = adPreferences
                 )
             }
         }
@@ -107,11 +62,6 @@ class MainActivity : ComponentActivity() {
 private fun NeobloggerMainApp(
     repository: ProjectRepository,
     adPreferences: AdPreferences,
-    onRequestImportFolder: ((Uri) -> Unit) -> Unit,
-    onRequestImportZip: ((Uri) -> Unit) -> Unit,
-    onRequestExportZip: (String, String, (Uri) -> Unit) -> Unit,
-    onRequestExportFolder: (String, (Uri) -> Unit) -> Unit,
-    onRequestAddAsset: ((Uri) -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -121,6 +71,8 @@ private fun NeobloggerMainApp(
     var selectedProject by remember { mutableStateOf<WebsiteProject?>(null) }
     var selectedFile by remember { mutableStateOf("index.html") }
     var projectFiles by remember { mutableStateOf<List<ProjectFile>>(emptyList()) }
+
+    var activeExportProjectId by remember { mutableStateOf("") }
 
     val editorState = remember { CodeEditorState("") }
     var savedSource by remember { mutableStateOf("") }
@@ -202,39 +154,96 @@ private fun NeobloggerMainApp(
         }
     }
 
-    fun handleImportZip(uri: Uri) {
-        scope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                        repository.importProjectFromZip(inputStream, "Imported Site")
-                    } ?: throw IllegalStateException("Cannot open zip stream.")
+    // SAF Activity Result Launchers
+    val importFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        repository.importProjectFromFolderUri(context, uri, "Imported Folder Site")
+                    }
+                }.onSuccess { importedProj ->
+                    refreshProjects()
+                    selectedProject = importedProj
+                    selectedFile = "index.html"
+                    refreshProjectFiles(importedProj.id)
+                    loadFile(importedProj.id, "index.html")
+                    snackbarHostState.showSnackbar("Folder website imported successfully.")
+                }.onFailure {
+                    snackbarHostState.showSnackbar("Folder Import failed: ${it.localizedMessage}")
                 }
-            }.onSuccess { importedProj ->
-                refreshProjects()
-                selectedProject = importedProj
-                selectedFile = importedProj.entryPage
-                refreshProjectFiles(importedProj.id)
-                loadFile(importedProj.id, importedProj.entryPage)
-                snackbarHostState.showSnackbar("Website imported successfully.")
-            }.onFailure {
-                snackbarHostState.showSnackbar("Import failed: ${it.localizedMessage}")
             }
         }
     }
 
-    fun handleExportZip(projectId: String, targetUri: Uri) {
-        scope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(targetUri)?.use { outputStream ->
-                        repository.exportProjectToZip(projectId, outputStream)
-                    } ?: throw IllegalStateException("Cannot write export stream.")
+    val importZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        repository.importProjectFromZipUri(context, uri, "Imported Zip Site")
+                    }
+                }.onSuccess { importedProj ->
+                    refreshProjects()
+                    selectedProject = importedProj
+                    selectedFile = "index.html"
+                    refreshProjectFiles(importedProj.id)
+                    loadFile(importedProj.id, "index.html")
+                    snackbarHostState.showSnackbar("ZIP website imported successfully.")
+                }.onFailure {
+                    snackbarHostState.showSnackbar("ZIP Import failed: ${it.localizedMessage}")
                 }
-            }.onSuccess {
-                snackbarHostState.showSnackbar("Website exported as ZIP.")
-            }.onFailure {
-                snackbarHostState.showSnackbar("Export failed: ${it.localizedMessage}")
+            }
+        }
+    }
+
+    val exportZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null && activeExportProjectId.isNotBlank()) {
+            scope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        repository.exportProjectToZipUri(context, activeExportProjectId, uri)
+                    }
+                }.onSuccess {
+                    snackbarHostState.showSnackbar("Website exported as ZIP successfully.")
+                }.onFailure {
+                    snackbarHostState.showSnackbar("ZIP Export failed: ${it.localizedMessage}")
+                }
+            }
+        }
+    }
+
+    val exportFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null && activeExportProjectId.isNotBlank()) {
+            scope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        repository.exportProjectToFolderUri(context, activeExportProjectId, uri)
+                    }
+                }.onSuccess {
+                    snackbarHostState.showSnackbar("Website exported to folder successfully.")
+                }.onFailure {
+                    snackbarHostState.showSnackbar("Folder Export failed: ${it.localizedMessage}")
+                }
+            }
+        }
+    }
+
+    val addAssetLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val proj = selectedProject ?: return@rememberLauncherForActivityResult
+        if (uri != null) {
+            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "image.png"
+            scope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            repository.addProjectAsset(proj.id, fileName, stream)
+                        }
+                    }
+                }.onSuccess {
+                    refreshProjectFiles(proj.id)
+                    snackbarHostState.showSnackbar("Asset added: $fileName")
+                }
             }
         }
     }
@@ -267,109 +276,78 @@ private fun NeobloggerMainApp(
         }
     }
 
-    fun addAssetToProject(uri: Uri) {
-        val proj = selectedProject ?: return
-        val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "image.png"
-        scope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { stream ->
-                        repository.addProjectAsset(proj.id, fileName, stream)
-                    }
-                }
-            }.onSuccess {
-                refreshProjectFiles(proj.id)
-                snackbarHostState.showSnackbar("Asset added: $fileName")
-            }
-        }
-    }
-
     LaunchedEffect(Unit) {
         refreshProjects()
     }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) }
-    ) { padding ->
-        val currentProject = selectedProject
-        if (currentProject == null) {
-            DashboardScreen(
-                projects = projects,
-                onCreateProject = ::createProject,
-                onImportFolderClick = {
-                    onRequestImportFolder { uri ->
-                        Toast.makeText(context, "Folder selected: $uri", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onImportZipClick = {
-                    onRequestImportZip { uri -> handleImportZip(uri) }
-                },
-                onOpenProject = { project ->
-                    selectedProject = project
-                    selectedFile = project.entryPage
-                    refreshProjectFiles(project.id)
-                    loadFile(project.id, project.entryPage)
-                },
-                onDeleteProject = ::deleteProject
-            )
-        } else {
-            WorkspaceScreen(
-                repository = repository,
-                project = currentProject,
-                selectedFile = selectedFile,
-                editorState = editorState,
-                savedSource = savedSource,
-                saveStatus = saveStatus,
-                projectFiles = projectFiles,
-                onBackToProjectsRequested = {
-                    selectedProject = null
-                    refreshProjects()
-                },
-                onSelectFile = { fileName ->
-                    saveCurrentFile()
-                    loadFile(currentProject.id, fileName)
-                },
-                onSourceChange = { newSource ->
-                    editorState.updateText(newSource)
-                    saveStatus = null
-                },
-                onSaveCurrentFile = ::saveCurrentFile,
-                onCreateNewFile = ::createNewFileInProject,
-                onDeleteFile = ::deleteFileInProject,
-                onExportZipRequested = {
-                    onRequestExportZip(currentProject.id, currentProject.name) { uri ->
-                        handleExportZip(currentProject.id, uri)
-                    }
-                },
-                onExportFolderRequested = {
-                    onRequestExportFolder(currentProject.id) { uri ->
-                        Toast.makeText(context, "Export directory selected: $uri", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onOpenAssetManager = { showAssetManager = true }
-            )
-        }
-    }
-
-    if (showLaunchAd) {
-        LaunchAdDialog(
-            onDismiss = {
-                adPreferences.markAdSkipped()
-                showLaunchAd = false
+    ) { paddingValues ->
+        Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+            val currentProject = selectedProject
+            if (currentProject == null) {
+                DashboardScreen(
+                    projects = projects,
+                    onCreateProject = { name -> createProject(name) },
+                    onImportFolderClick = {
+                        importFolderLauncher.launch(null)
+                    },
+                    onImportZipClick = {
+                        importZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed"))
+                    },
+                    onOpenProject = { project ->
+                        selectedProject = project
+                        selectedFile = "index.html"
+                        refreshProjectFiles(project.id)
+                        loadFile(project.id, "index.html")
+                    },
+                    onDeleteProject = { project -> deleteProject(project) }
+                )
+            } else {
+                WorkspaceScreen(
+                    project = currentProject,
+                    selectedFile = selectedFile,
+                    editorState = editorState,
+                    savedSource = savedSource,
+                    saveStatus = saveStatus,
+                    projectFiles = projectFiles,
+                    repository = repository,
+                    onBackToProjectsRequested = { selectedProject = null },
+                    onSelectFile = { fileName -> loadFile(currentProject.id, fileName) },
+                    onSourceChange = { saveStatus = null },
+                    onSaveCurrentFile = { saveCurrentFile() },
+                    onCreateNewFile = { name -> createNewFileInProject(name) },
+                    onDeleteFile = { name -> deleteFileInProject(name) },
+                    onExportZipRequested = {
+                        activeExportProjectId = currentProject.id
+                        exportZipLauncher.launch("${currentProject.name}.zip")
+                    },
+                    onExportFolderRequested = {
+                        activeExportProjectId = currentProject.id
+                        exportFolderLauncher.launch(null)
+                    },
+                    onOpenAssetManager = { showAssetManager = true }
+                )
             }
-        )
-    }
 
-    if (showAssetManager) {
-        AssetManagerDialog(
-            projectFiles = projectFiles,
-            onAddAssetClick = {
-                onRequestAddAsset { uri -> addAssetToProject(uri) }
-            },
-            onDeleteAsset = { relativePath ->
-                deleteFileInProject(relativePath)
-            },
-            onDismiss = { showAssetManager = false }
-        )
+            if (showLaunchAd) {
+                LaunchAdDialog(
+                    onDismiss = { showLaunchAd = false }
+                )
+            }
+
+            if (showAssetManager && currentProject != null) {
+                AssetManagerDialog(
+                    projectFiles = projectFiles,
+                    onAddAssetClick = {
+                        addAssetLauncher.launch(arrayOf("image/*"))
+                    },
+                    onDeleteAsset = { relativePath ->
+                        deleteFileInProject(relativePath)
+                    },
+                    onDismiss = { showAssetManager = false }
+                )
+            }
+        }
     }
 }
