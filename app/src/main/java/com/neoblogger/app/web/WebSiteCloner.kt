@@ -24,6 +24,27 @@ object WebSiteCloner {
         return "https://$trimmed".trimEnd('/')
     }
 
+    fun resolveAbsoluteUrl(baseUrl: String, relativeRef: String): String? {
+        val trimmedRef = relativeRef.trim()
+        if (trimmedRef.isBlank() || trimmedRef.startsWith("data:") || trimmedRef.startsWith("#") || trimmedRef.startsWith("javascript:")) {
+            return null
+        }
+        return runCatching {
+            URL(URL(baseUrl), trimmedRef).toString().substringBefore('#')
+        }.getOrNull()
+    }
+
+    fun deriveRelativePath(rootUrl: String, absoluteUrl: String): String? {
+        val cleanRoot = rootUrl.trimEnd('/')
+        val cleanAbs = absoluteUrl.substringBefore('?')
+
+        if (!cleanAbs.startsWith(cleanRoot, ignoreCase = true)) return null
+
+        var rel = cleanAbs.substring(cleanRoot.length).trimStart('/')
+        if (rel.isBlank()) rel = "index.html"
+        return rel
+    }
+
     fun cloneWebSiteFromUrl(
         targetUrlInput: String,
         suggestedName: String,
@@ -37,10 +58,11 @@ object WebSiteCloner {
         onProgress("Creating project '$cleanProjectName'...")
         val project = repository.createProject(cleanProjectName)
 
-        val visitedUrls = mutableSetOf<String>()
-        val downloadedAssets = mutableSetOf<String>()
+        val pageQueue = ArrayDeque<String>()
+        val visitedPageUrls = mutableSetOf<String>()
+        val downloadedResourcePaths = mutableSetOf<String>()
 
-        fun downloadTextFromUrl(urlString: String): String? {
+        fun downloadText(urlString: String): String? {
             return runCatching {
                 val url = URL(urlString)
                 val conn = url.openConnection() as HttpURLConnection
@@ -54,7 +76,7 @@ object WebSiteCloner {
             }.getOrNull()
         }
 
-        fun downloadBinaryFromUrl(urlString: String, destRelativePath: String) {
+        fun downloadBinary(urlString: String, relPath: String) {
             runCatching {
                 val url = URL(urlString)
                 val conn = url.openConnection() as HttpURLConnection
@@ -63,93 +85,107 @@ object WebSiteCloner {
                 conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile) Neoblogger/0.1.0")
                 if (conn.responseCode == HttpURLConnection.HTTP_OK) {
                     conn.inputStream.use { input ->
-                        val fileName = destRelativePath.substringAfterLast('/')
-                        repository.addProjectAsset(project.id, fileName, input)
+                        repository.addProjectAsset(project.id, relPath, input)
                     }
                 }
             }
         }
 
-        onProgress("Fetching main page from $rootUrl...")
-        val mainHtml = downloadTextFromUrl("$rootUrl/index.html") ?: downloadTextFromUrl(rootUrl)
+        val initialIndexUrl = "$rootUrl/index.html"
+        pageQueue.addLast(initialIndexUrl)
+        visitedPageUrls.add(initialIndexUrl)
+        visitedPageUrls.add(rootUrl)
+        visitedPageUrls.add("$rootUrl/")
 
-        if (mainHtml.isNullOrBlank()) {
-            throw IllegalStateException("Could not reach or download $rootUrl")
-        }
+        onProgress("Starting website crawl from $rootUrl...")
 
-        visitedUrls.add("$rootUrl/index.html")
-        visitedUrls.add(rootUrl)
+        while (pageQueue.isNotEmpty()) {
+            val currentPageUrl = pageQueue.removeFirst()
+            val relHtmlPath = deriveRelativePath(rootUrl, currentPageUrl) ?: "index.html"
 
-        // Process and Save index.html
-        var processedMainHtml: String = mainHtml
+            onProgress("Downloading HTML ($relHtmlPath)...")
+            val htmlContent = downloadText(currentPageUrl) ?: if (currentPageUrl == initialIndexUrl) downloadText(rootUrl) else null
 
-        // 1. Discover CSS Stylesheets
-        val cssLinks = Regex("(?i)<link[^>]*href=[\"']([^\"']+\\.css)[\"'][^>]*>").findAll(mainHtml).map { it.groupValues[1] }.toList()
-        for (cssRel in cssLinks) {
-            val absoluteCssUrl = if (cssRel.startsWith("http")) cssRel else "$rootUrl/${cssRel.trimStart('/')}"
-            val cssFileName = cssRel.substringAfterLast('/').ifBlank { "style.css" }
+            if (htmlContent.isNullOrBlank()) continue
 
-            onProgress("Downloading stylesheet: $cssFileName...")
-            val cssContent = downloadTextFromUrl(absoluteCssUrl)
-            if (cssContent != null) {
-                repository.saveFile(project.id, cssFileName, cssContent)
-            }
-        }
+            // 1. Scan and Download CSS Stylesheets
+            val cssMatches = Regex("(?i)<link[^>]*href=[\"']([^\"']+\\.css[^\"']*)[\"'][^>]*>").findAll(htmlContent)
+            for (match in cssMatches) {
+                val cssRef = match.groupValues[1]
+                val absCssUrl = resolveAbsoluteUrl(currentPageUrl, cssRef) ?: continue
+                val relCssPath = deriveRelativePath(rootUrl, absCssUrl) ?: continue
 
-        // 2. Discover JS Scripts
-        val jsLinks = Regex("(?i)<script[^>]*src=[\"']([^\"']+\\.js)[\"'][^>]*>").findAll(mainHtml).map { it.groupValues[1] }.toList()
-        for (jsRel in jsLinks) {
-            val absoluteJsUrl = if (jsRel.startsWith("http")) jsRel else "$rootUrl/${jsRel.trimStart('/')}"
-            val jsFileName = jsRel.substringAfterLast('/').ifBlank { "script.js" }
+                if (!downloadedResourcePaths.contains(relCssPath)) {
+                    downloadedResourcePaths.add(relCssPath)
+                    onProgress("Downloading CSS: $relCssPath...")
+                    val cssText = downloadText(absCssUrl)
+                    if (cssText != null) {
+                        repository.createProjectFile(project.id, relCssPath, cssText)
 
-            onProgress("Downloading script: $jsFileName...")
-            val jsContent = downloadTextFromUrl(absoluteJsUrl)
-            if (jsContent != null) {
-                repository.saveFile(project.id, jsFileName, jsContent)
-            }
-        }
-
-        // 3. Discover Images / Media
-        val imgLinks = Regex("(?i)<img[^>]*src=[\"']([^\"']+)[\"'][^>]*>").findAll(mainHtml).map { it.groupValues[1] }.toList()
-        for (imgRel in imgLinks) {
-            if (imgRel.startsWith("data:")) continue
-            val absoluteImgUrl = if (imgRel.startsWith("http")) imgRel else "$rootUrl/${imgRel.trimStart('/')}"
-            val imgFileName = imgRel.substringAfterLast('/').ifBlank { "image.png" }
-
-            if (!downloadedAssets.contains(imgFileName)) {
-                downloadedAssets.add(imgFileName)
-                onProgress("Downloading asset: $imgFileName...")
-                downloadBinaryFromUrl(absoluteImgUrl, "assets/$imgFileName")
-            }
-
-            processedMainHtml = processedMainHtml.replace(imgRel, "assets/$imgFileName")
-        }
-
-        repository.saveFile(project.id, "index.html", processedMainHtml)
-
-        // 4. Discover Linked Internal HTML Pages
-        val htmlPageLinks = Regex("(?i)<a[^>]*href=[\"']([^\"']+\\.html)[\"'][^>]*>").findAll(mainHtml).map { it.groupValues[1] }.toList()
-        for (pageRel in htmlPageLinks) {
-            if (pageRel.startsWith("http") && !pageRel.contains(domainName)) continue
-            val pageFileName = pageRel.substringAfterLast('/')
-            if (pageFileName.isBlank() || pageFileName.lowercase() == "index.html") continue
-
-            val absolutePageUrl = if (pageRel.startsWith("http")) pageRel else "$rootUrl/${pageRel.trimStart('/')}"
-            if (!visitedUrls.contains(absolutePageUrl)) {
-                visitedUrls.add(absolutePageUrl)
-                onProgress("Downloading page: $pageFileName...")
-                val pageHtml = downloadTextFromUrl(absolutePageUrl)
-                if (pageHtml != null) {
-                    var processedPageHtml: String = pageHtml
-                    for (assetName in downloadedAssets) {
-                        processedPageHtml = processedPageHtml.replace(Regex("(?i)(src|href)=[\"'][^\"']*$assetName[\"']"), "assets/$assetName")
+                        // Scan CSS for url(...) assets
+                        val urlMatches = Regex("(?i)url\\([\"']?([^\"')]+)[\"']?\\)").findAll(cssText)
+                        for (uMatch in urlMatches) {
+                            val assetRef = uMatch.groupValues[1]
+                            val absAssetUrl = resolveAbsoluteUrl(absCssUrl, assetRef) ?: continue
+                            val relAssetPath = deriveRelativePath(rootUrl, absAssetUrl) ?: continue
+                            if (!downloadedResourcePaths.contains(relAssetPath)) {
+                                downloadedResourcePaths.add(relAssetPath)
+                                onProgress("Downloading CSS asset: $relAssetPath...")
+                                downloadBinary(absAssetUrl, relAssetPath)
+                            }
+                        }
                     }
-                    repository.saveFile(project.id, pageFileName, processedPageHtml)
+                }
+            }
+
+            // 2. Scan and Download JS Scripts
+            val jsMatches = Regex("(?i)<script[^>]*src=[\"']([^\"']+\\.js[^\"']*)[\"'][^>]*>").findAll(htmlContent)
+            for (match in jsMatches) {
+                val jsRef = match.groupValues[1]
+                val absJsUrl = resolveAbsoluteUrl(currentPageUrl, jsRef) ?: continue
+                val relJsPath = deriveRelativePath(rootUrl, absJsUrl) ?: continue
+
+                if (!downloadedResourcePaths.contains(relJsPath)) {
+                    downloadedResourcePaths.add(relJsPath)
+                    onProgress("Downloading JS: $relJsPath...")
+                    val jsText = downloadText(absJsUrl)
+                    if (jsText != null) {
+                        repository.createProjectFile(project.id, relJsPath, jsText)
+                    }
+                }
+            }
+
+            // 3. Scan and Download Images & Media
+            val mediaMatches = Regex("(?i)<(img|source|video|audio)[^>]*src=[\"']([^\"']+)[\"'][^>]*>").findAll(htmlContent)
+            for (match in mediaMatches) {
+                val mediaRef = match.groupValues[2]
+                val absMediaUrl = resolveAbsoluteUrl(currentPageUrl, mediaRef) ?: continue
+                val relMediaPath = deriveRelativePath(rootUrl, absMediaUrl) ?: continue
+
+                if (!downloadedResourcePaths.contains(relMediaPath)) {
+                    downloadedResourcePaths.add(relMediaPath)
+                    onProgress("Downloading media: $relMediaPath...")
+                    downloadBinary(absMediaUrl, relMediaPath)
+                }
+            }
+
+            // Save HTML File
+            repository.createProjectFile(project.id, relHtmlPath, htmlContent)
+
+            // 4. Scan and Enqueue Internal HTML Links
+            val pageMatches = Regex("(?i)<a[^>]*href=[\"']([^\"']+\\.html[^\"']*)[\"'][^>]*>").findAll(htmlContent)
+            for (match in pageMatches) {
+                val pageRef = match.groupValues[1]
+                val absPageUrl = resolveAbsoluteUrl(currentPageUrl, pageRef) ?: continue
+
+                if (absPageUrl.startsWith(rootUrl, ignoreCase = true) && !visitedPageUrls.contains(absPageUrl)) {
+                    visitedPageUrls.add(absPageUrl)
+                    pageQueue.addLast(absPageUrl)
                 }
             }
         }
 
-        onProgress("Website cloning complete!")
+        onProgress("Website cloning complete! All pages and assets downloaded.")
         return project
     }
 }

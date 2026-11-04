@@ -238,7 +238,7 @@ fun DesignTabScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var lastEmittedHtml by remember { mutableStateOf("") }
-    var doc by remember(projectId) { mutableStateOf(HtmlDomParser.parse(htmlSource)) }
+    var doc by remember(projectId, htmlSource) { mutableStateOf(HtmlDomParser.parse(htmlSource)) }
     var selectedNodeId by remember { mutableStateOf<String?>(null) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
